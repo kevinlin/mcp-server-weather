@@ -6,34 +6,67 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("weather")
 
 # Constants
-NWS_API_BASE = "https://api.weather.gov"
-USER_AGENT = "weather-app/1.0"
+OWM_API_BASE = "https://api.openweathermap.org/data/2.5"
+API_KEY = "e411d1d29666e3580fe254613fe6d141"
 
 
-async def make_nws_request(url: str) -> dict[str, Any] | None:
-    """Make a request to the NWS API with proper error handling."""
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "application/geo+json"
-    }
+async def make_owm_request(url: str, params: dict) -> dict[str, Any] | None:
+    """Make a request to the OpenWeatherMap API with error handling."""
+    params["appid"] = API_KEY
+    params["units"] = "imperial"  # Use Fahrenheit
+
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers, timeout=30.0)
+            response = await client.get(url, params=params, timeout=30.0)
             response.raise_for_status()
             return response.json()
-        except Exception:
+        except Exception as e:
             return None
 
 
-def format_alert(feature: dict) -> str:
-    """Format an alert feature into a readable string."""
-    props = feature["properties"]
+def format_alert(weather_data: dict) -> str | None:
+    """Format severe weather conditions into an alert-style message."""
+    if not weather_data:
+        return None
+
+    # Check for severe conditions
+    main = weather_data.get("weather", [{}])[0]
+    temp = weather_data.get("main", {})
+
+    severe_conditions = []
+
+    # Check temperature extremes
+    if temp.get("temp") > 95:
+        severe_conditions.append("Extreme Heat")
+    elif temp.get("temp") < 32:
+        severe_conditions.append("Freezing Conditions")
+
+    # Check severe weather types
+    severe_weather_types = {
+        "thunderstorm": "Thunderstorm",
+        "tornado": "Tornado",
+        "hurricane": "Hurricane",
+        "snow": "Heavy Snow",
+    }
+
+    weather_id = str(main.get("id", ""))
+    weather_main = main.get("main", "").lower()
+
+    for key, alert_type in severe_weather_types.items():
+        if key in weather_main or key in main.get("description", "").lower():
+            severe_conditions.append(alert_type)
+
+    if not severe_conditions:
+        return None
+
     return f"""
-Event: {props.get('event', 'Unknown')}
-Area: {props.get('areaDesc', 'Unknown')}
-Severity: {props.get('severity', 'Unknown')}
-Description: {props.get('description', 'No description available')}
-Instructions: {props.get('instruction', 'No specific instructions provided')}
+Severe Weather Alert
+Conditions: {', '.join(severe_conditions)}
+Location: {weather_data.get('name', 'Unknown')}
+Temperature: {temp.get('temp')}°F
+Description: {main.get('description', 'No description available')}
+Humidity: {temp.get('humidity')}%
+Wind Speed: {weather_data.get('wind', {}).get('speed')} mph
 """
 
 
@@ -44,16 +77,28 @@ async def get_alerts(state: str) -> str:
     Args:
         state: Two-letter US state code (e.g. CA, NY)
     """
-    url = f"{NWS_API_BASE}/alerts/active/area/{state}"
-    data = await make_nws_request(url)
+    # Map of major cities per state for sampling weather conditions
+    state_cities = {
+        "CA": ["Los Angeles", "San Francisco", "Sacramento"],
+        "NY": ["New York", "Buffalo", "Albany"],
+        # Add more states and cities as needed
+    }
 
-    if not data or "features" not in data:
-        return "Unable to fetch alerts or no alerts found."
+    cities = state_cities.get(state.upper(), [])
+    if not cities:
+        return f"State {state} not supported yet. Please add cities to the state_cities mapping."
 
-    if not data["features"]:
-        return "No active alerts for this state."
+    alerts = []
+    for city in cities:
+        url = f"{OWM_API_BASE}/weather"
+        data = await make_owm_request(url, {"q": city})
 
-    alerts = [format_alert(feature) for feature in data["features"]]
+        if alert := format_alert(data):
+            alerts.append(alert)
+
+    if not alerts:
+        return f"No severe weather alerts for {state}"
+
     return "\n---\n".join(alerts)
 
 
@@ -65,29 +110,28 @@ async def get_forecast(latitude: float, longitude: float) -> str:
         latitude: Latitude of the location
         longitude: Longitude of the location
     """
-    # First get the forecast grid endpoint
-    points_url = f"{NWS_API_BASE}/points/{latitude},{longitude}"
-    points_data = await make_nws_request(points_url)
+    url = f"{OWM_API_BASE}/forecast"
+    data = await make_owm_request(url, {
+        "lat": latitude,
+        "lon": longitude
+    })
 
-    if not points_data:
+    if not data or "list" not in data:
         return "Unable to fetch forecast data for this location."
 
-    # Get the forecast URL from the points response
-    forecast_url = points_data["properties"]["forecast"]
-    forecast_data = await make_nws_request(forecast_url)
-
-    if not forecast_data:
-        return "Unable to fetch detailed forecast."
-
     # Format the periods into a readable forecast
-    periods = forecast_data["properties"]["periods"]
     forecasts = []
-    for period in periods[:5]:  # Only show next 5 periods
+    for period in data["list"][:5]:  # Show next 5 periods
+        main = period["main"]
+        weather = period["weather"][0]
+
         forecast = f"""
-{period['name']}:
-Temperature: {period['temperature']}°{period['temperatureUnit']}
-Wind: {period['windSpeed']} {period['windDirection']}
-Forecast: {period['detailedForecast']}
+Time: {period['dt_txt']}
+Temperature: {main['temp']}°F
+Feels Like: {main['feels_like']}°F
+Conditions: {weather['main']} - {weather['description']}
+Humidity: {main['humidity']}%
+Wind: {period['wind']['speed']} mph
 """
         forecasts.append(forecast)
 
@@ -95,5 +139,4 @@ Forecast: {period['detailedForecast']}
 
 
 if __name__ == "__main__":
-    # Initialize and run the server
     mcp.run(transport='stdio')
