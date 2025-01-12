@@ -1,13 +1,17 @@
+ import os
 from typing import Any
 import httpx
+from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+
+load_dotenv()
 
 # Initialize FastMCP server
 mcp = FastMCP("weather")
 
 # Constants
 OWM_API_BASE = "https://api.openweathermap.org/data/2.5"
-API_KEY = "e411d1d29666e3580fe254613fe6d141"
+API_KEY = os.getenv("OWM_API_KEY")
 
 
 async def make_owm_request(url: str, params: dict) -> dict[str, Any] | None:
@@ -32,14 +36,16 @@ def format_alert(weather_data: dict) -> str | None:
     # Check for severe conditions
     main = weather_data.get("weather", [{}])[0]
     temp = weather_data.get("main", {})
+    current_temp = temp.get("temp")
 
     severe_conditions = []
 
-    # Check temperature extremes
-    if temp.get("temp") > 95:
-        severe_conditions.append("Extreme Heat")
-    elif temp.get("temp") < 32:
-        severe_conditions.append("Freezing Conditions")
+    # Check temperature extremes only if temperature data is available
+    if current_temp is not None:
+        if temp.get("temp") > 35:  # Extreme heat threshold in Celsius
+            severe_conditions.append("Extreme Heat")
+        elif temp.get("temp") < 0:  # Freezing point in Celsius
+            severe_conditions.append("Freezing Conditions")
 
     # Check severe weather types
     severe_weather_types = {
