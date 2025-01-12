@@ -13,7 +13,7 @@ API_KEY = "e411d1d29666e3580fe254613fe6d141"
 async def make_owm_request(url: str, params: dict) -> dict[str, Any] | None:
     """Make a request to the OpenWeatherMap API with error handling."""
     params["appid"] = API_KEY
-    params["units"] = "imperial"  # Use Fahrenheit
+    params["units"] = "metric"  # Temperature in Celsius and wind speed in meter/sec
 
     async with httpx.AsyncClient() as client:
         try:
@@ -63,10 +63,10 @@ def format_alert(weather_data: dict) -> str | None:
 Severe Weather Alert
 Conditions: {', '.join(severe_conditions)}
 Location: {weather_data.get('name', 'Unknown')}
-Temperature: {temp.get('temp')}°F
+Temperature: {temp.get('temp')}°C
 Description: {main.get('description', 'No description available')}
 Humidity: {temp.get('humidity')}%
-Wind Speed: {weather_data.get('wind', {}).get('speed')} mph
+Wind Speed: {weather_data.get('wind', {}).get('speed')} m/s
 """
 
 
@@ -127,11 +127,11 @@ async def get_forecast(latitude: float, longitude: float) -> str:
 
         forecast = f"""
 Time: {period['dt_txt']}
-Temperature: {main['temp']}°F
-Feels Like: {main['feels_like']}°F
+Temperature: {main['temp']}°C
+Feels Like: {main['feels_like']}°C
 Conditions: {weather['main']} - {weather['description']}
 Humidity: {main['humidity']}%
-Wind: {period['wind']['speed']} mph
+Wind: {period['wind']['speed']} m/s
 """
         forecasts.append(forecast)
 
